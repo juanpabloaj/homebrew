@@ -4,6 +4,8 @@ require 'blacklist'
 
 module Homebrew extend self
   def install
+    raise FormulaUnspecifiedError if ARGV.named.empty?
+
     ARGV.named.each do |name|
       msg = blacklisted? name
       raise "No available formula for #{name}\n#{msg}" if msg
@@ -101,6 +103,10 @@ module Homebrew extend self
         begin
           fi = FormulaInstaller.new(f)
           fi.install
+          # Due to the nature of Keg#unlink, this will remove symlinks from an
+          # older keg, which may still be present if an uninstallation was done
+          # via `rm -rf <keg>`; this is desired.
+          Keg.new("#{f.rack}/#{f.version}").unlink
           fi.caveats
           fi.finish
         rescue FormulaAlreadyInstalledError => e
