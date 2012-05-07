@@ -36,11 +36,25 @@ def path_folders
 end
 
 
+# See https://github.com/mxcl/homebrew/pull/9986
+def check_path_for_trailing_slashes
+  bad_paths = ENV['PATH'].split(':').select{|p| p[p.length-1, p.length] == '/'}
+  return if bad_paths.empty?
+  s = <<-EOS.undent
+    Some directories in your path end in a slash.
+    Directories in your path should not end in a slash. This can break other
+    doctor checks. The following directories should be edited:
+  EOS
+  bad_paths.each{|p| s << "    #{p}"}
+  s
+end
+
 # Installing MacGPG2 interferes with Homebrew in a big way
 # http://sourceforge.net/projects/macgpg2/files/
 def check_for_macgpg2
   if File.exist? "/Applications/start-gpg-agent.app" or
-     File.exist? "/Library/Receipts/libiconv1.pkg"
+     File.exist? "/Library/Receipts/libiconv1.pkg" or
+     File.exist? "/usr/local/MacGPG2"
     <<-EOS.undent
       You may have installed MacGPG2 via the package installer.
       Several other checks in this script will turn up problems, such as stray
@@ -170,6 +184,7 @@ def check_for_broken_symlinks
   broken_symlinks = []
   %w[lib include sbin bin etc share].each do |d|
     d = HOMEBREW_PREFIX/d
+    next unless d.directory?
     d.find do |pn|
       broken_symlinks << pn if pn.symlink? and pn.readlink.expand_path.to_s =~ /^#{HOMEBREW_PREFIX}/ and not pn.exist?
     end
@@ -181,41 +196,20 @@ def check_for_broken_symlinks
   end
 end
 
-def check_gcc_42
-  if MacOS.gcc_42_build_version == nil
-    # Don't show this warning on Xcode 4.2+
-    if MacOS.xcode_version < "4.2"
-      "We couldn't detect gcc 4.2.x. Some formulae require this compiler."
-    end
-  elsif MacOS.gcc_42_build_version < RECOMMENDED_GCC_42
-    <<-EOS.undent
-      Your gcc 4.2.x version is older than the recommended version.
-      It may be advisable to upgrade to the latest release of Xcode.
-    EOS
-  end
-end
-
-def check_xcode_exists
-  if MacOS.xcode_version == nil
-      <<-EOS.undent
-        We couldn't detect any version of Xcode.
-        If you downloaded Xcode from the App Store, you may need to run the installer.
-      EOS
-  elsif MacOS.xcode_version < "4.0"
-    if MacOS.gcc_40_build_version == nil
-      "We couldn't detect gcc 4.0.x. Some formulae require this compiler."
-    elsif MacOS.gcc_40_build_version < RECOMMENDED_GCC_40
-      <<-EOS.undent
-        Your gcc 4.0.x version is older than the recommended version.
-        It may be advisable to upgrade to the latest release of Xcode.
-      EOS
-    end
-  end
-end
-
 def check_for_latest_xcode
-  # the check_xcode_exists check is enough
-  return if MacOS.xcode_version.nil?
+  if MacOS.xcode_version.nil?
+    if MacOS.version >= 10.7 then return <<-EOS.undent
+      We couldn't detect any version of Xcode.
+      The latest Xcode can be obtained from the Mac App Store.
+      Alternatively, the Command Line Tools package can be obtained from
+        http://connect.apple.com
+      EOS
+    else return <<-EOS.undent
+      We couldn't detect any version of Xcode.
+      The latest Xcode can be obtained from http://connect.apple.com
+      EOS
+    end
+  end
 
   latest_xcode = case MacOS.version
     when 10.5 then "3.1.4"
@@ -236,6 +230,17 @@ def check_cc
     Line Tools for Xcode. You can either download this from http://connect.apple.com
     or install them from inside Xcode's Download preferences. Homebrew does not
     require all of Xcode! You only need the Command Line Tools package!
+    EOS
+  end
+end
+
+def check_standard_compilers
+  return if check_for_latest_xcode # only check if Xcode is up to date
+  if !MacOS.compilers_standard? then <<-EOS.undent
+    Your compilers are different from the standard versions for your Xcode.
+    If you have Xcode 4.3 or newer, you should install the Command Line Tools for
+    Xcode from within Xcode's Download preferences.
+    Otherwise, you should reinstall Xcode.
     EOS
   end
 end
@@ -408,7 +413,7 @@ def check_user_path_1
 
                 #{conflicts * "\n                "}
 
-            Consider ammending your PATH so that #{HOMEBREW_PREFIX}/bin
+            Consider amending your PATH so that #{HOMEBREW_PREFIX}/bin
             is ahead of /usr/bin in your PATH.
           EOS
         end
@@ -426,7 +431,7 @@ def check_user_path_2
   unless $seen_prefix_bin
     <<-EOS.undent
       Homebrew's bin was not found in your path.
-      Consider ammending your PATH variable so it contains:
+      Consider amending your PATH variable so it contains:
         #{HOMEBREW_PREFIX}/bin
     EOS
   end
@@ -439,7 +444,7 @@ def check_user_path_3
     unless $seen_prefix_sbin
       <<-EOS.undent
         Homebrew's sbin was not found in your path.
-        Consider ammending your PATH variable so it contains:
+        Consider amending your PATH variable so it contains:
           #{HOMEBREW_PREFIX}/sbin
       EOS
     end
@@ -508,22 +513,26 @@ def check_for_gettext
 end
 
 def check_for_iconv
-  if %w[lib/libiconv.dylib
-        include/iconv.h ].any? { |f| File.exist? "#{HOMEBREW_PREFIX}/#{f}" }
+  iconv_files = %w[lib/iconv.dylib
+    include/iconv.h].select { |f| File.exist? "#{HOMEBREW_PREFIX}/#{f}" }
+  if !iconv_files.empty?
     <<-EOS.undent
-      libiconv was detected in your PREFIX.
+      The following libiconv files were detected in #{HOMEBREW_PREFIX}:
+      #{iconv_files.join "\n      "}
       Homebrew doesn't provide a libiconv formula, and expects to link against
       the system version in /usr/lib.
 
-      If you have a non-Homebrew provided libiconv, many formulae will fail
-      to compile or link, especially if it wasn't compiled with the proper
-      architectures.
+      If you have an alternate libiconv, many formulae will fail to compile or
+      link, especially if it wasn't compiled with the proper architectures.
     EOS
+  else
+    nil
   end
 end
 
 def check_for_config_scripts
-  real_cellar = HOMEBREW_CELLAR.exist? && HOMEBREW_CELLAR.realpath
+  return unless HOMEBREW_CELLAR.exist?
+  real_cellar = HOMEBREW_CELLAR.realpath
 
   config_scripts = []
 
@@ -843,6 +852,7 @@ def check_for_outdated_homebrew
 end
 
 def check_for_unlinked_but_not_keg_only
+  return unless HOMEBREW_CELLAR.exist?
   unlinked = HOMEBREW_CELLAR.children.reject do |rack|
     if not rack.directory?
       true
@@ -887,22 +897,18 @@ end # end class Checks
 
 module Homebrew extend self
   def doctor
-    raring_to_brew = true
-
     checks = Checks.new
 
     checks.methods.select{ |method| method =~ /^check_/ }.sort.each do |method|
       out = checks.send(method)
       unless out.nil? or out.empty?
-        puts unless raring_to_brew
+        puts unless Homebrew.failed?
         lines = out.to_s.split('\n')
-        opoo lines.shift
+        ofail lines.shift
         puts lines
-        raring_to_brew = false
       end
     end
 
-    puts "Your system is raring to brew." if raring_to_brew
-    exit raring_to_brew ? 0 : 1
+    puts "Your system is raring to brew." unless Homebrew.failed?
   end
 end
