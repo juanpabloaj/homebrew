@@ -272,7 +272,7 @@ class Pathname
   end
 
   def text_executable?
-    %r[#!\s*(/.+)+] === open('r') { |f| f.readline }
+    %r[^#!\s*.+] === open('r') { |f| f.readline }
   rescue EOFError
     false
   end
@@ -300,6 +300,13 @@ class Pathname
   def sha2
     require 'digest/sha2'
     incremental_hash(Digest::SHA2)
+  end
+  alias_method :sha256, :sha2
+
+  def verify_checksum expected
+    raise ChecksumMissingError if expected.nil? or expected.empty?
+    actual = Checksum.new(expected.hash_type, send(expected.hash_type).downcase)
+    raise ChecksumMismatchError.new(expected, actual) unless expected == actual
   end
 
   if '1.9' <= RUBY_VERSION
