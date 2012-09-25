@@ -7,17 +7,15 @@ class TheSilverSearcher < Formula
 
   head 'https://github.com/ggreer/the_silver_searcher.git'
 
-  if MacOS.xcode_version >= '4.3'
-    depends_on 'automake' => :build
-    depends_on 'autoconf' => :build
-  end
+  depends_on :automake
+  depends_on :autoconf
+
   depends_on 'pkg-config' => :build
   depends_on 'pcre'
 
-
   def install
     # Stable tarball does not include pre-generated configure script
-    system "aclocal -I /usr/local/share/aclocal"
+    system "aclocal -I #{HOMEBREW_PREFIX}/share/aclocal"
     system "autoconf"
     system "autoheader"
     system "automake --add-missing"
