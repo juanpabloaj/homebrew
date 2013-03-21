@@ -1,11 +1,13 @@
 require 'formula'
 
+# This should really be named Mpich now, but homebrew cannot currently handle
+# formula renames, see homebrew issue #14374.
 class Mpich2 < Formula
-  homepage 'http://www.mcs.anl.gov/research/projects/mpich2/index.php'
-  url 'http://www.mcs.anl.gov/research/projects/mpich2/downloads/tarballs/1.5/mpich2-1.5.tar.gz'
-  sha1 'be7448227dde5badf3d6ebc0c152b200998421e0'
+  homepage 'http://www.mpich.org/'
+  url 'http://www.mpich.org/static/tarballs/3.0.2/mpich-3.0.2.tar.gz'
+  sha1 '510f5a05bb5c8214caa86562e054c455cb5287d1'
 
-  head 'https://svn.mcs.anl.gov/repos/mpi/mpich2/trunk'
+  head 'git://git.mpich.org/mpich.git'
 
   # the HEAD version requires the autotools to be installed
   # (autoconf>=2.67, automake>=1.12.3, libtool>=2.4)
@@ -15,12 +17,25 @@ class Mpich2 < Formula
   end
 
   option 'disable-fortran', "Do not attempt to build Fortran bindings"
+  option 'enable-shared', "Build shared libraries"
+
+  # fails with clang from Xcode 4.5.1 on 10.7 and 10.8 (see #15533)
+  # linker bug appears to have been fixed by Xcode 4.6
+  fails_with :clang do
+    build 421
+    cause <<-EOS.undent
+      Clang generates code that causes the linker to segfault when building
+      MPICH with shared libraries.  Specific message:
+
+          collect2: ld terminated with signal 11 [Segmentation fault: 11]
+      EOS
+  end if build.include? 'enable-shared'
 
   def install
     if build.head?
       # ensure that the consistent set of autotools built by homebrew is used to
-      # build MPICH2, otherwise very bizarre build errors can occur
-      ENV['MPICH2_AUTOTOOLS_DIR'] = (HOMEBREW_PREFIX+'bin')
+      # build MPICH, otherwise very bizarre build errors can occur
+      ENV['MPICH_AUTOTOOLS_DIR'] = (HOMEBREW_PREFIX+'bin')
       system "./autogen.sh"
     end
 
@@ -36,13 +51,14 @@ class Mpich2 < Formula
       ENV.fortran
     end
 
+    # MPICH configure defaults to "--disable-shared"
+    if build.include? 'enable-shared'
+      args << "--enable-shared"
+    end
+
     system "./configure", *args
     system "make"
     system "make install"
-
-    # MPE installs several helper scripts like "mpeuninstall" to the sbin
-    # directory, which we don't need when installing via homebrew
-    sbin.rmtree
   end
 
   def caveats; <<-EOS.undent
